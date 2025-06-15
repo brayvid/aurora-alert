@@ -1,0 +1,11 @@
+certifi==2025.6.15
+cffi==1.17.1
+charset-normalizer==3.4.2
+h3==4.2.2
+idna==3.10
+numpy==2.0.2
+pycparser==2.22
+python-dotenv==1.1.0
+requests==2.32.4
+timezonefinder==6.5.9
+urllib3==2.4.0
