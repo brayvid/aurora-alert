@@ -1,13 +1,25 @@
 import os
 import requests
 import smtplib
+import logging
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import re
-from datetime import datetime, time, timedelta, date # Added date
+from datetime import datetime, time as dt_time, timedelta, date # Aliased time to avoid conflict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from timezonefinder import TimezoneFinder
+
+# --- Configure Standard Logging ---
+# All log messages will have a UTC timestamp and a log level.
+logging.Formatter.converter = time.gmtime
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s UTC] [%(levelname)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+# ------------------------------------
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -33,8 +45,8 @@ try:
         raise ValueError("MAGNETIC_LATITUDE and MAGNETIC_LONGITUDE must be set in the .env file.")
 
 except (ValueError, TypeError) as e:
-    print(f"Error loading settings from .env file: {e}")
-    print("Please ensure your .env file is correctly formatted and all required variables are set.")
+    logging.critical(f"Error loading settings from .env file: {e}")
+    logging.critical("Please ensure your .env file is correctly formatted and all required variables are set.")
     exit()
 # ---------------------------------------------
 
@@ -47,15 +59,15 @@ try:
     if timezone_str:
         LOCAL_TZ = ZoneInfo(timezone_str)
         LOCAL_TZ_NAME = timezone_str
-        print(f"Successfully determined local timezone: {LOCAL_TZ_NAME}")
+        logging.info(f"Successfully determined local timezone: {LOCAL_TZ_NAME}")
     else:
-        print(f"Warning: Could not determine timezone for lat={MAGNETIC_LATITUDE}, lon={MAGNETIC_LONGITUDE}. Defaulting to UTC.")
+        logging.warning(f"Could not determine timezone for lat={MAGNETIC_LATITUDE}, lon={MAGNETIC_LONGITUDE}. Defaulting to UTC.")
         LOCAL_TZ = ZoneInfo("UTC")
 except ZoneInfoNotFoundError:
-    print(f"Warning: Timezone '{timezone_str}' found by timezonefinder is not recognized by zoneinfo. Defaulting to UTC.")
+    logging.warning(f"Timezone '{timezone_str}' found by timezonefinder is not recognized by zoneinfo. Defaulting to UTC.")
     LOCAL_TZ = ZoneInfo("UTC")
 except Exception as e:
-    print(f"Error determining local timezone: {e}. Defaulting to UTC.")
+    logging.error(f"Error determining local timezone: {e}. Defaulting to UTC.")
     LOCAL_TZ = ZoneInfo("UTC")
 
 UTC_TZ = ZoneInfo("UTC")
@@ -71,7 +83,7 @@ def get_aurora_forecast():
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching aurora forecast: {e}")
+        logging.error(f"Error fetching aurora forecast: {e}")
         return None
 
 def parse_forecast(forecast_text, target_tz):
@@ -97,9 +109,9 @@ def parse_forecast(forecast_text, target_tz):
                     issued_year_found = True
                     break
             except (ValueError, IndexError) as e:
-                print(f"DEBUG: Warning: Could not parse year from issued line: '{line}'. Error: {e}. Using current system year.")
+                logging.warning(f"Could not parse year from issued line: '{line}'. Error: {e}. Using current system year.")
     if not issued_year_found:
-         print(f"DEBUG: Warning: :Issued: line not found or unparseable for year. Using current system year: {current_year}")
+         logging.warning(f":Issued: line not found or unparseable for year. Using current system year: {current_year}")
 
     date_header_line_idx = -1
     forecast_dates_raw = []
@@ -129,7 +141,7 @@ def parse_forecast(forecast_text, target_tz):
                 break 
 
     if date_header_line_idx == -1:
-        print("Error: Could not find or parse the date header line in the forecast.")
+        logging.error("Could not find or parse the date header line in the forecast.")
         return high_kp_periods
 
     parsed_dates = []
@@ -151,10 +163,10 @@ def parse_forecast(forecast_text, target_tz):
                 year_for_forecast = current_year + 1
             parsed_dates.append(date(year_for_forecast, current_month_int, day_int))
         if len(parsed_dates) != 3:
-            print(f"Error: Expected to parse 3 dates, but got {len(parsed_dates)}. Raw: {forecast_dates_raw}")
+            logging.error(f"Expected to parse 3 dates, but got {len(parsed_dates)}. Raw: {forecast_dates_raw}")
             return high_kp_periods
     except (ValueError, IndexError) as e:
-        print(f"Error parsing date components from '{forecast_dates_raw}'. Error: {e}")
+        logging.error(f"Error parsing date components from '{forecast_dates_raw}'. Error: {e}")
         return high_kp_periods
 
     for line_num in range(date_header_line_idx + 1, len(lines)):
@@ -177,7 +189,7 @@ def parse_forecast(forecast_text, target_tz):
                 kp_index = int(float(kp_str)) 
                 if kp_index >= KP_THRESHOLD:
                     forecast_date_obj = parsed_dates[i]
-                    utc_start_dt = datetime.combine(forecast_date_obj, time(hour=start_hour), tzinfo=UTC_TZ)
+                    utc_start_dt = datetime.combine(forecast_date_obj, dt_time(hour=start_hour), tzinfo=UTC_TZ)
                     utc_end_dt = utc_start_dt + timedelta(hours=3)
                     local_start_dt = utc_start_dt.astimezone(target_tz)
                     local_end_dt = utc_end_dt.astimezone(target_tz)
@@ -189,7 +201,7 @@ def parse_forecast(forecast_text, target_tz):
 def send_email_alert(high_kp_periods, local_tz_name_for_display):
     """Sends an email alert if there are high Kp-index periods."""
     if not high_kp_periods:
-        print(f"No periods with Kp >= {KP_THRESHOLD} found. No email sent.")
+        logging.info(f"No periods with Kp >= {KP_THRESHOLD} found. No email will be sent.")
         return
 
     # Parse the RECIPIENT_STRING into a list of individual email addresses for BCC
@@ -201,8 +213,8 @@ def send_email_alert(high_kp_periods, local_tz_name_for_display):
     # Remove duplicates just in case sender is also in RECIPIENT_STRING
     all_to_addrs = sorted(list(set(all_to_addrs))) 
 
-    if not all_to_addrs: # Should not happen if EMAIL_SENDER is always present
-        print("Error: No valid recipients configured.")
+    if not all_to_addrs:
+        logging.error("No valid recipients configured.")
         return
 
     max_kp_found = max(p[2] for p in high_kp_periods) if high_kp_periods else 0
@@ -234,22 +246,21 @@ def send_email_alert(high_kp_periods, local_tz_name_for_display):
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            # server.send_message(msg) # This might not handle BCCs as intended by some older libraries
             # Using sendmail is more explicit for controlling envelope recipients
             server.sendmail(EMAIL_SENDER, all_to_addrs, msg.as_string())
-        print(f"Email alert sent successfully to {EMAIL_SENDER} and BCC'd to {len(bcc_recipients_list)} recipient(s).")
+        logging.info(f"Email alert sent successfully to {EMAIL_SENDER} and BCC'd to {len(bcc_recipients_list)} recipient(s).")
     except smtplib.SMTPException as e:
-        print(f"Error sending email: {e}")
-        print("Please double-check your SMTP settings, username, and password in the .env file.")
+        logging.error(f"Error sending email: {e}")
+        logging.error("Please double-check your SMTP settings, username, and password in the .env file.")
     except Exception as e:
-        print(f"An unexpected error occurred during email sending: {e}")
+        logging.error(f"An unexpected error occurred during email sending: {e}")
 
 if __name__ == "__main__":
-    print("Running Aurora Alert Check...")
-    print(f"Fetching and parsing REAL aurora forecast (times will be converted to {LOCAL_TZ_NAME})...")
+    logging.info("Running Aurora Alert Check...")
+    logging.info(f"Fetching and parsing aurora forecast (times will be converted to {LOCAL_TZ_NAME})...")
     forecast_text = get_aurora_forecast()
     if forecast_text:
         high_kp_periods = parse_forecast(forecast_text, LOCAL_TZ)
         send_email_alert(high_kp_periods, LOCAL_TZ_NAME)
     else:
-        print("Could not retrieve forecast data. No email sent.")
+        logging.warning("Could not retrieve forecast data. No action taken.")
