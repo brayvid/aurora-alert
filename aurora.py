@@ -11,33 +11,61 @@ from datetime import datetime, time as dt_time, timedelta, date # Aliased time t
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from timezonefinder import TimezoneFinder
 
-# --- Configure Standard Logging ---
+# --- Define Log File Path and Ensure Directory Exists ---
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "aurora.log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# --- Configure Standard Logging to a File ---
+# Get the root logger
+logger = logging.getLogger()
+logger.setLevel(logging.INFO) # Set the minimum level of messages to handle
+
+# Create a formatter
 # All log messages will have a UTC timestamp and a log level.
-logging.Formatter.converter = time.gmtime
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s UTC] [%(levelname)s] - %(message)s',
+formatter = logging.Formatter(
+    fmt='[%(asctime)s UTC] [%(levelname)s] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-# ------------------------------------
+formatter.converter = time.gmtime # Ensure asctime is in UTC
+
+# Create a file handler to write logs to a file
+file_handler = logging.FileHandler(LOG_FILE)
+file_handler.setFormatter(formatter)
+
+# Add the handler to the root logger
+# Note: This replaces the default console output with file output.
+if not logger.handlers:
+    logger.addHandler(file_handler)
+# ----------------------------------------------------
+
+def get_clean_env(var_name, default=None):
+    """
+    Gets an environment variable, removes comments, and strips whitespace/quotes.
+    """
+    value = os.getenv(var_name, default)
+    if isinstance(value, str):
+        # 1. Remove comments (anything after a '#')
+        # 2. Strip leading/trailing whitespace
+        # 3. Strip leading/trailing quotes
+        return value.split('#')[0].strip().strip("'\"")
+    return value # Return non-string types (like None from default or if var is not set) as is
 
 # Load environment variables from the .env file
 load_dotenv()
 
 # --- Load Settings from Environment Variables ---
 try:
-    MAGNETIC_LATITUDE = float(os.getenv("MAGNETIC_LATITUDE"))
-    MAGNETIC_LONGITUDE = float(os.getenv("MAGNETIC_LONGITUDE"))
-    KP_THRESHOLD = int(os.getenv("KP_THRESHOLD", "5"))
+    # Use the helper function to get cleaned values
+    MAGNETIC_LATITUDE = float(get_clean_env("MAGNETIC_LATITUDE"))
+    MAGNETIC_LONGITUDE = float(get_clean_env("MAGNETIC_LONGITUDE"))
+    KP_THRESHOLD = int(get_clean_env("KP_THRESHOLD", "5"))
 
-    EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-    EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-    
-    # Get the recipient string, could be one or more comma-separated emails
-    RECIPIENT_STRING = os.getenv("EMAIL_RECIPIENT") 
-    
-    SMTP_SERVER = os.getenv("SMTP_SERVER")
-    SMTP_PORT = int(os.getenv("SMTP_PORT"))
+    EMAIL_SENDER = get_clean_env("EMAIL_SENDER")
+    EMAIL_PASSWORD = get_clean_env("EMAIL_PASSWORD")
+    RECIPIENT_STRING = get_clean_env("EMAIL_RECIPIENT") 
+    SMTP_SERVER = get_clean_env("SMTP_SERVER")
+    SMTP_PORT = int(get_clean_env("SMTP_PORT"))
 
     if not all([EMAIL_SENDER, EMAIL_PASSWORD, RECIPIENT_STRING, SMTP_SERVER, SMTP_PORT]):
         raise ValueError("One or more required environment variables for email are not set (EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT, SMTP_SERVER, SMTP_PORT).")
@@ -256,7 +284,7 @@ def send_email_alert(high_kp_periods, local_tz_name_for_display):
         logging.error(f"An unexpected error occurred during email sending: {e}")
 
 if __name__ == "__main__":
-    logging.info("Running Aurora Alert Check...")
+    logging.info("--- Starting Aurora Alert Check ---")
     logging.info(f"Fetching and parsing aurora forecast (times will be converted to {LOCAL_TZ_NAME})...")
     forecast_text = get_aurora_forecast()
     if forecast_text:
@@ -264,3 +292,4 @@ if __name__ == "__main__":
         send_email_alert(high_kp_periods, LOCAL_TZ_NAME)
     else:
         logging.warning("Could not retrieve forecast data. No action taken.")
+    logging.info("--- Aurora Alert Check Finished ---")
