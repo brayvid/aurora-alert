@@ -76,6 +76,29 @@ Once configured, run the script from your terminal:
 python aurora.py
 ```
 
+## Automation (Cron)
+
+To check the forecast automatically and receive alerts without manual execution, you can schedule the script using `cron` on Linux or macOS.
+
+1. Open your crontab editor:
+   ```bash
+   crontab -e
+   ```
+
+2. Add a job to run the script at your preferred interval. It is recommended to navigate to the project directory first so the script can locate your `.env` file and virtual environment:
+
+   **Run every 6 hours:**
+   ```cron
+   0 */6 * * * cd /path/to/aurora-alert && .venv/bin/python aurora.py >> cron.log 2>&1
+   ```
+
+   **Run twice daily (e.g., at 08:00 and 20:00):**
+   ```cron
+   0 8,20 * * * cd /path/to/aurora-alert && .venv/bin/python aurora.py >> cron.log 2>&1
+   ```
+
+> **Note:** Replace `/path/to/aurora-alert` with the absolute path to your project directory. Appending `>> cron.log 2>&1` ensures that standard output and errors are captured in a log file for troubleshooting.
+
 ----
 
 <p align="center">&copy; Copyright 2026 <a href="https://blakerayvid.com">Blake Rayvid</a>. All rights reserved.</p>
